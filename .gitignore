@@ -1,0 +1,6 @@
+__pycache__
+data/
+log
+.idea/
+venv/
+TODOS
