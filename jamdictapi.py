@@ -31,10 +31,10 @@ if not os.path.exists('data'):
 WORDS_FREQ_FILEPATH = "data/nf_words_freq"
 
 
-async def generate_word_frequency_file(filepath):
+def generate_word_frequency_file(filepath):
+    print("Generating word frequency file...")
     nf_to_kanjis = defaultdict(set)
-    jmd = await coro_jmd()
-    for entry in jmd.jmdict_xml.entries:
+    for entry in JMD.jmdict_xml.entries:
         for word in chain(entry.kanji_forms, entry.kana_forms):
             for pri in word.pri:
                 if pri.startswith('nf'):
@@ -48,13 +48,15 @@ async def generate_word_frequency_file(filepath):
 
 
 def gen_word_to_freqrank():
-    _word_to_freqrank = {}
     if not os.path.exists(WORDS_FREQ_FILEPATH):
         generate_word_frequency_file(WORDS_FREQ_FILEPATH)
+
+    _word_to_freqrank = {}
     with open(WORDS_FREQ_FILEPATH) as infile:
         for idx, line in enumerate(infile):
             word = line.rstrip()
             _word_to_freqrank[word] = idx
+
     return _word_to_freqrank
 
 
