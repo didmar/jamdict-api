@@ -10,6 +10,7 @@ from itertools import chain
 from typing import List, Optional
 
 import romkan
+from chirptext.deko import HIRAGANA, KATAKANA
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from jamdict import Jamdict
@@ -138,8 +139,7 @@ async def lookup_word_entries(
             word = str(kanji_form)
             is_valid, error = valid_word_candidate(word, kanji_to_match, min_length, min_nb_kanjis)
             if is_valid:
-                json_entry = entry.to_json()
-                json_entry["word"] = word
+                json_entry = word_entry_to_custom_json(word, entry)
                 valid_entries.append(json_entry)
                 print(f"- {word}: OK")
                 break
@@ -252,8 +252,8 @@ async def find_one_valid_word(
         else:
             word = random.choice(list(candidate_words_to_entry.keys()))
 
-        result = candidate_words_to_entry[word].to_json()
-        result["word"] = word
+        entry = candidate_words_to_entry[word]
+        result = word_entry_to_custom_json(word, entry)
         return {
             "result": result,
         }
@@ -262,6 +262,19 @@ async def find_one_valid_word(
         "result": None
     }
 
+def word_entry_to_custom_json(word, entry):
+    json_entry = entry.to_json()
+    json_entry["word"] = word
+    json_entry["kanjis"] = list(kanji_list_from_word_entry(json_entry))
+    return json_entry
+
+def kanji_list_from_word_entry(result):
+    kanjis = set()
+    if result["kanji"]:
+        for c in result["kanji"][0]["text"]:
+            if c not in HIRAGANA and c not in KATAKANA:
+                kanjis.add(c)
+    return list(kanjis)
 
 async def all_kanjis_lte_max_grad(word, max_kanji_grade):
     for kanji in word:
