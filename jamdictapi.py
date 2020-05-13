@@ -1,8 +1,8 @@
+import json
 import re
 
 import operator
 import os
-import pickle
 import random
 import sys
 from collections import defaultdict
@@ -15,7 +15,6 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from jamdict import Jamdict
 from contextvars import ContextVar
-
 
 # Wrapping Jamdict in a ContextVar for SQLite access (not multi-threaded...)
 JMD = Jamdict()
@@ -30,6 +29,28 @@ if not os.path.exists('data'):
     os.mkdir('data')
 
 WORDS_FREQ_FILEPATH = "data/nf_words_freq"
+
+KANJI_JSON_FILE = "data/kanji-jouyou.json"
+
+
+def parse_kanji_json_file():
+    with open(KANJI_JSON_FILE) as infile:
+        return json.load(infile)
+
+
+KANJIS = parse_kanji_json_file()
+
+
+def generate_kanjis_by_jlpt():
+    kanjis_by_jlpt = defaultdict(set)
+    for kanji, details in KANJIS.items():
+        kanjis_by_jlpt[details["jlpt_new"]].add(kanji)
+    return kanjis_by_jlpt
+
+
+KANJIS_BY_JLPT = generate_kanjis_by_jlpt()
+MIN_JLPT_LEVEL = 1
+MAX_JLPT_LEVEL = 5
 
 
 def generate_word_frequency_file(filepath):
@@ -67,19 +88,6 @@ WORD_TO_FREQRANK = gen_word_to_freqrank()
 def word_to_freqrank(word):
     return WORD_TO_FREQRANK.get(word, sys.maxsize)
 
-
-# 1-6 for primary school, 8 for secondary school
-KANJI_GRADE_TO_INFO = {
-    1: {"desc": "教育第１学年", "score": 1},
-    2: {"desc": "教育第２学年", "score": 2},
-    3: {"desc": "教育第３学年", "score": 3},
-    4: {"desc": "教育第４学年", "score": 4},
-    5: {"desc": "教育第５学年", "score": 5},
-    6: {"desc": "教育第６学年", "score": 6},
-    8: {"desc": "常用", "score": 7},
-}
-KANJI_GRADES = sorted(KANJI_GRADE_TO_INFO.keys())
-MAX_KANJI_GRADE = KANJI_GRADES[-1]
 
 app = FastAPI()
 
@@ -158,14 +166,14 @@ def valid_word_candidate(
         kanji_to_match: Optional[str],
         min_length: int,
         min_nb_kanjis: int,
-        max_kanji_grade: int = MAX_KANJI_GRADE,
+        min_jlpt: int = MIN_JLPT_LEVEL,
 ):
     if kanji_to_match and kanji_to_match not in word:
         return False, f'3 Word must contain {kanji_to_match}'
     if len(word) < min_length:
         return False, f'2 Word must be {min_length}+ character'
 
-    kanjis = get_word_kanjis_lte_max_grade(word, max_kanji_grade)
+    kanjis = get_word_kanjis_gte_min_jlpt(word, min_jlpt)
 
     if len(kanjis) < min_nb_kanjis:
         return False, f'1 Word must contain {min_nb_kanjis}+ kanji'
@@ -185,19 +193,6 @@ async def get_word_meaning(word: str):
     }
 
 
-@app.get("/kanji-details/{kanji}")
-async def kanji_details(kanji: str):
-    jmd = await coro_jmd()
-    entry = jmd.get_char(kanji)
-    meaning = ", ".join((m.value for m in entry.rm_groups[0].meanings if m.m_lang == ''))
-    grade = int(entry.grade) if entry.grade else None
-    return {
-        "kanji": kanji,
-        "meaning": meaning,
-        "grade": grade,
-    }
-
-
 @app.get("/find-word-with-kanji/{kanji_to_match}")
 async def find_one_valid_word(
         kanji_to_match: str,
@@ -206,7 +201,7 @@ async def find_one_valid_word(
         excluded_kanjis: List[str] = None,
         min_length: int = 1,
         min_nb_kanjis: int = 1,
-        max_kanji_grade: int = MAX_KANJI_GRADE,
+        min_jlpt: int = MIN_JLPT_LEVEL,
         pool_size: int = 3,
 ):
     if excluded_words is None:
@@ -224,12 +219,12 @@ async def find_one_valid_word(
             if word in excluded_words:
                 continue
             is_valid, _ = valid_word_candidate(word, kanji_to_match, min_length, min_nb_kanjis,
-                                               max_kanji_grade=max_kanji_grade)
+                                               min_jlpt=min_jlpt)
             if is_valid:
                 # Avoid kanjis that are not outside our grade, or excluded
                 if (
                         candidate_kanjis_only is False
-                        or (all_kanjis_lte_max_grad(word, max_kanji_grade)
+                        or (all_kanjis_lte_max_grad(word, min_jlpt)
                             and not any((char in excluded_kanjis for char in word)))
                 ):
                     print(f"{word} is a candidate")
@@ -262,11 +257,13 @@ async def find_one_valid_word(
         "result": None
     }
 
+
 def word_entry_to_custom_json(word, entry):
     json_entry = entry.to_json()
     json_entry["word"] = word
     json_entry["kanjis"] = list(kanji_list_from_word_entry(json_entry))
     return json_entry
+
 
 def kanji_list_from_word_entry(result):
     kanjis = set()
@@ -276,78 +273,51 @@ def kanji_list_from_word_entry(result):
                 kanjis.add(c)
     return list(kanjis)
 
-async def all_kanjis_lte_max_grad(word, max_kanji_grade):
+
+async def all_kanjis_lte_max_grad(word: str, min_jlpt: int):
     for kanji in word:
-        grade_ok = await is_lte_max_grade(kanji, max_kanji_grade)
+        grade_ok = await is_gte_min_jlpt(kanji, min_jlpt)
         if not grade_ok:
             return False
     return True
 
 
-async def is_lte_max_grade(kanji: str, max_kanji_grade: int):
-    jmd = await coro_jmd()
-    entry = jmd.get_char(kanji)
-    if entry.grade:
-        return int(entry.grade) <= max_kanji_grade
-    return False
+async def is_gte_min_jlpt(kanji: str, min_jlpt: int):
+    entry = KANJIS_BY_JLPT.get(kanji)
+    if entry is None:
+        return False
+    return entry["jlpt_new"] >= min_jlpt
 
 
-def get_word_kanjis_lte_max_grade(word: str, max_kanji_grade: int):
+def get_word_kanjis_gte_min_jlpt(word: str, min_jlpt: int):
     kanjis = []
     for char in word:
-        if is_lte_max_grade(char, max_kanji_grade):
+        if is_gte_min_jlpt(char, min_jlpt):
             kanjis.append(char)
     return kanjis
 
 
-def grade_text(grade):
-    if grade is None:
-        return f"No grade"
-    info = KANJI_GRADE_TO_INFO.get(grade)
-    if info:
-        return f'{info["score"] * "★"} {info["desc"]}'
-    raise Exception(f"Grade {grade} is not used in the game !")
-
-
-def next_grade(grade):
-    idx = KANJI_GRADES.index(grade)
-    if idx == len(KANJI_GRADES) - 1:
-        return idx
-    return idx + 1
-
-
-def kanjis_by_grade():
-    def compute_kanjis_by_grade():
-        __kanjis_by_grade = defaultdict(set)
-        for kanji in JMD.kd2_xml.char_map.values():
-            if kanji.grade is not None:
-                __kanjis_by_grade[int(kanji.grade)].add(kanji.literal)
-        return __kanjis_by_grade
-
-    cache_filepath = "data/kanjis_grade"
-
-    if os.path.isfile(cache_filepath):
-        print("Loading kanjis from cache")
-        with open(cache_filepath, "rb") as cache_file:
-            _kanjis_by_grade = pickle.load(cache_file)
-
-    else:
-        print("Save kanjis to cache")
-        _kanjis_by_grade = compute_kanjis_by_grade()
-        with open(cache_filepath, "wb") as cache_file:
-            pickle.dump(_kanjis_by_grade, cache_file)
-
-    return _kanjis_by_grade
-
-
-KANJIS_BY_GRADE = kanjis_by_grade()
-
-
 @app.get("/kanjis")
-def get_kanjis(min_grade: int = 1, max_grade: int = MAX_KANJI_GRADE):
-    kanjis = []
-    for grade in range(min_grade, max_grade + 1):
-        kanjis.extend(KANJIS_BY_GRADE[grade])
+def get_kanjis(min_jlpt: int = 1, max_jlpt: int = 5):
+    kanjis = set()
+    if min_jlpt > max_jlpt:
+        min_jlpt, max_jlpt = max_jlpt, min_jlpt
+    for grade in range(min_jlpt, max_jlpt + 1):
+        kanjis.update(KANJIS_BY_JLPT[grade])
     return {
-        "kanjis": kanjis,
+        "kanjis": list(kanjis),
+    }
+
+
+@app.get("/kanji-details/{kanji}")
+def kanji_details(kanji: str):
+    entry = KANJIS.get(kanji)
+    if not entry:
+        raise Exception(f"Kanji {kanji} not found in Jouyou kanjis list !")
+    meaning = ", ".join(entry["meanings"])
+    jlpt = entry["jlpt_new"]
+    return {
+        "kanji": kanji,
+        "meaning": meaning,
+        "jlpt": jlpt,
     }
