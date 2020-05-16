@@ -267,10 +267,26 @@ def word_entry_to_custom_json(word, entry):
 
 def kanji_list_from_word_entry(result):
     kanjis = set()
+    has_unknown_char = False
     if result["kanji"]:
-        for c in result["kanji"][0]["text"]:
-            if c not in HIRAGANA and c not in KATAKANA:
-                kanjis.add(c)
+        for idx, kanji_entry in enumerate(result["kanji"]):
+            text = kanji_entry["text"]
+            for c in text:
+                if c not in HIRAGANA and c not in KATAKANA:
+                    if c in KANJIS:
+                        kanjis.add(c)
+                    else:
+                        # for example, first entry for 三密 is ３密 !
+                        # we want to skip it and use the correct second entry
+                        has_unknown_char = True
+                        break
+            if has_unknown_char:
+                kanjis = set()
+                has_unknown_char = False
+            else:
+                break
+    if has_unknown_char:
+        raise Exception(f"No valid kanji entry found for {result}")
     return list(kanjis)
 
 
