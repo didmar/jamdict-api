@@ -305,7 +305,7 @@ def get_kanjis(min_jlpt: int = 1, max_jlpt: int = 5):
     for grade in range(min_jlpt, max_jlpt + 1):
         kanjis.update(KANJIS_BY_JLPT[grade])
     return {
-        "kanjis": list(kanjis),
+        "kanjis": [kanji_details(kanji) for kanji in kanjis]
     }
 
 
