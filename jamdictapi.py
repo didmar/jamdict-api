@@ -110,8 +110,15 @@ def to_hiragana(word: str):
     _word = word.lower()
     hiragana = romkan.to_hiragana(_word)
     valid = not re.search("[a-z']", hiragana)
+
+    if hiragana.endswith("ん") and not (_word.endswith("nn") or _word.endswith("'")):
+        partial = hiragana[:-1] + "n"
+    else:
+        partial = hiragana
+
     return {
         'hiragana': hiragana,
+        'partial': partial,
         'valid': valid,
     }
 
