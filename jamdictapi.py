@@ -201,6 +201,7 @@ async def get_word_meaning(word: str):
 
 
 @app.get("/find-word-with-kanji/{kanji_to_match}")
+@app.post("/find-word-with-kanji/{kanji_to_match}")
 async def find_one_valid_word(
         kanji_to_match: str,
         candidate_kanjis_only: bool = True,
