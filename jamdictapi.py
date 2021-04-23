@@ -54,14 +54,20 @@ MAX_JLPT_LEVEL = 5
 
 
 def generate_word_frequency_file(filepath):
-    print("Generating word frequency file...")
+    print("Generating word frequency file, can take a few minutes...")
     nf_to_kanjis = defaultdict(set)
-    for entry in JMD.jmdict_xml.entries:
-        for word in chain(entry.kanji_forms, entry.kana_forms):
-            for pri in word.pri:
-                if pri.startswith('nf'):
-                    nf_x = int(pri[-2:])
-                    nf_to_kanjis[nf_x].add(word.text)
+    # Hackish way to get all the JMdict entries through jamdict's internal db
+    # (Doing this to not have to download JMdict separately as an XML file)
+    with JMD.jmdict.ctx() as ctx:
+        for _entry in JMD.jmdict.Entry.select(ctx=ctx):
+            idseq = _entry.idseq
+            entry = JMD.jmdict.get_entry(idseq, ctx=ctx)
+            if entry:
+                for word in chain(entry.kanji_forms, entry.kana_forms):
+                    for pri in word.pri:
+                        if pri.startswith('nf'):
+                            nf_x = int(pri[-2:])
+                            nf_to_kanjis[nf_x].add(word.text)
 
     with open(filepath, "w") as outfile:
         for nf_x in sorted(nf_to_kanjis.keys()):

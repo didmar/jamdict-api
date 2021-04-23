@@ -1,6 +1,6 @@
 fastapi>=0.54.1
-jamdict>=0.1a6
+jamdict>=0.1a9
+jamdict-data>=1.5
 romkan>=0.2.1
 uvicorn>=0.11.5
 contextvars>=2.4
-chirptext~=0.1a18
